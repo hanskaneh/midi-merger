@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIDI Drum Merger</title>
+  <script src="https://unpkg.com"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #38bdf8;
+      --danger: #f87171;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 480px;
+      background: var(--card);
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 6px 0; color: var(--accent); }
+    p { font-size: 0.85rem; color: var(--muted); margin: 0 0 18px 0; }
+    
+    .upload-btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      background: #0f172a;
+      border: 2px dashed var(--accent);
+      border-radius: 12px;
+      text-align: center;
+      color: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 14px;
+    }
+    input[type="file"] { display: none; }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 16px 0;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    li {
+      background: #0f172a;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .file-info { display: flex; flex-direction: column; overflow: hidden; }
+    .file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge { font-size: 0.75rem; color: var(--accent); }
+    .del-btn {
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+    }
+
+    .name-box { margin-bottom: 14px; }
+    .name-box label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+    .name-box input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+
+    button.merge-btn {
+      width: 100%;
+      padding: 16px;
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.merge-btn:disabled {
+      background: #334155;
+      color: #64748b;
+    }
+
+    #status {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      text-align: center;
+      color: #4ade80;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🥁 MIDI Drum Merger</h1>
+    <p>Añade tus pistas .mid (bombo, caja, platos...) y únelas en el Canal 10 de batería.</p>
+
+    <label class="upload-btn" for="midiFiles">
+      + Añadir archivo(s) MIDI
+    </label>
+    <input type="file" id="midiFiles" accept=".mid,.midi,audio/midi,audio/x-midi" multiple>
+
+    <ul id="fileList"></ul>
+
+    <div class="name-box">
+      <label for="outName">Nombre del archivo final:</label>
+      <input type="text" id="outName" value="bateria_completa">
+    </div>
+
+    <button id="mergeBtn" class="merge-btn" disabled>Unir y Descargar MIDI</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('midiFiles');
+    const fileList = document.getElementById('fileList');
+    const mergeBtn = document.getElementById('mergeBtn');
+    const outNameInput = document.getElementById('outName');
+    const status = document.getElementById('status');
+
+    let loadedFiles = [];
+
+    function renderList() {
+      fileList.innerHTML = '';
+      loadedFiles.forEach((item, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <div class="file-info">
+            <span class="file-name">${item.name}</span>
+            <span class="badge">${item.noteCount} notas</span>
+          </div>
+          <button class="del-btn" onclick="removeFile(${index})">Quitar</button>
+        `;
+        fileList.appendChild(li);
+      });
+      mergeBtn.disabled = loadedFiles.length === 0;
+    }
+
+    window.removeFile = (index) => {
+      loadedFiles.splice(index, 1);
+      renderList();
+    };
+
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      status.textContent = '';
+
+      for (const file of files) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const midi = new Midi(arrayBuffer);
+          let noteCount = 0;
+          midi.tracks.forEach(t => noteCount += t.notes.length);
+          loadedFiles.push({ name: file.name, midi, noteCount });
+        } catch (err) {
+          alert('No se pudo leer el archivo: ' + file.name);
+        }
+      }
+      fileInput.value = '';
+      renderList();
+    });
+
+    mergeBtn.addEventListener('click', () => {
+      if (!loadedFiles.length) return;
+
+      const outputMidi = new Midi();
+      const firstMidi = loadedFiles[0].midi;
+
+      if (firstMidi.header.tempos.length > 0) {
+        outputMidi.header.tempos = JSON.parse(JSON.stringify(firstMidi.header.tempos));
+      }
+      if (firstMidi.header.timeSignatures.length > 0) {
+        outputMidi.header.timeSignatures = JSON.parse(JSON.stringify(firstMidi.header.timeSignatures));
+      }
+      outputMidi.header.update();
+
+      const drumTrack = outputMidi.addTrack();
+      drumTrack.name = "Bateria Unificada";
+      drumTrack.channel = 9; // Canal 10 MIDI
+
+      let totalNotes = 0;
+      loadedFiles.forEach(item => {
+        item.midi.tracks.forEach(track => {
+          track.notes.forEach(note => {
+            drumTrack.addNote({
+              midi: note.midi,
+              time: note.time,
+              duration: note.duration,
+              velocity: note.velocity
+            });
+            totalNotes++;
+          });
+        });
+      });
+
+      const midiBytes = outputMidi.toArray();
+      const blob = new Blob([midiBytes], { type: 'audio/midi' });
+      const url = URL.createObjectURL(blob);
+
+      let fileName = outNameInput.value.trim() || 'bateria_completa';
+      if (!fileName.toLowerCase().endsWith('.mid')) fileName += '.mid';
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      status.textContent = `¡Listo! ${totalNotes} notas guardadas en ${fileName}`;
+    });
+  </script>
+</body>
+</html>
