@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIDI Drum Merger + AI Groove</title>
+  <script src="https://cdn.jsdelivr.net/npm/@magenta/music@1.23.1/dist/magentamusic.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #38bdf8;
+      --danger: #f87171;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 480px;
+      background: var(--card);
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+    h1 { font-size: 1.3rem; margin: 0 0 6px 0; color: var(--accent); }
+    p { font-size: 0.85rem; color: var(--muted); margin: 0 0 16px 0; }
+    .upload-btn {
+      display: block;
+      width: 100%;
+      padding: 15px;
+      background: #0f172a;
+      border: 2px dashed var(--accent);
+      border-radius: 12px;
+      text-align: center;
+      color: var(--accent);
+      font-weight: 700;
+      cursor: pointer;
+      margin-bottom: 14px;
+    }
+    input[type="file"] { display: none; }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 14px 0;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    li {
+      background: #0f172a;
+      padding: 9px 12px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .del-btn {
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .panel {
+      background: #0f172a;
+      padding: 14px;
+      border-radius: 12px;
+      margin-bottom: 14px;
+    }
+    .row { margin-bottom: 12px; }
+    .row:last-child { margin-bottom: 0; }
+    .lbl {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      margin-bottom: 4px;
+    }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .name-label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+    .in-name {
+      width: 100%;
+      padding: 11px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #fff;
+      margin-bottom: 14px;
+      font-size: 0.92rem;
+    }
+    .merge-btn {
+      width: 100%;
+      padding: 16px;
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      border-radius: 12px;
+      font-size: 0.98rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .merge-btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+    #status { margin-top: 12px; font-size: 0.85rem; text-align: center; color: #4ade80; }
+    #errorLog { margin-top: 8px; font-size: 0.8rem; text-align: center; color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🥁 MIDI Merger + Magenta AI</h1>
+    <p>Une pistas .mid en el Canal 10 y humanízalas con la red neuronal GrooVAE.</p>
+
+    <label class="upload-btn" for="midiInput">+ Añadir archivo(s) MIDI</label>
+    <input type="file" id="midiInput" multiple>
+
+    <ul id="fileList"></ul>
+
+    <div class="panel">
+      <div class="row">
+        <div class="lbl"><span>Humanizar Tiempo (IA)</span><span id="valTime">50%</span></div>
+        <input type="range" id="sliderTime" min="0" max="100" value="50">
+      </div>
+      <div class="row">
+        <div class="lbl"><span>Humanizar Dinámica (IA)</span><span id="valVel">65%</span></div>
+        <input type="range" id="sliderVel" min="0" max="100" value="65">
+      </div>
+      <div class="row">
+        <div class="lbl"><span>Estilo (Ajustado ↔ Laid-back)</span><span id="valFeel">0 ms</span></div>
+        <input type="range" id="sliderFeel" min="-50" max="50" value="0">
+      </div>
+    </div>
+
+    <label class="name-label" for="outName">Nombre del archivo final:</label>
+    <input type="text" id="outName" class="in-name" value="bateria_humanizada">
+
+    <button id="mergeBtn" class="merge-btn" disabled>Unir, Humanizar con IA y Descargar</button>
+    <div id="status"></div>
+    <div id="errorLog"></div>
+  </div>
+
+  <script>
+    const midiInput = document.getElementById('midiInput');
+    const fileList = document.getElementById('fileList');
+    const mergeBtn = document.getElementById('mergeBtn');
+    const outName = document.getElementById('outName');
+    const statusEl = document.getElementById('status');
+    const errorEl = document.getElementById('errorLog');
+
+    const sliderTime = document.getElementById('sliderTime');
+    const sliderVel = document.getElementById('sliderVel');
+    const sliderFeel = document.getElementById('sliderFeel');
+
+    sliderTime.oninput = () => document.getElementById('valTime').textContent = sliderTime.value + '%';
+    sliderVel.oninput = () => document.getElementById('valVel').textContent = sliderVel.value + '%';
+    sliderFeel.oninput = () => document.getElementById('valFeel').textContent = (sliderFeel.value > 0 ? '+' : '') + sliderFeel.value + ' ms';
+
+    let filesData = [];
+    let vaeModel = null;
+    const CHECKPOINT_URL = 'https://storage.googleapis.com/magentadata/js/checkpoints/music_vae/groovae_2bar_humanize';
+
+    function readVarLen(view, state) {
+      let val = 0, b;
+      do {
+        b = view.getUint8(state.offset++);
+        val = (val << 7) | (b & 0x7f);
+      } while (b & 0x80);
+      return val;
+    }
+
+    function writeVarLen(val) {
+      const buf = [val & 0x7f];
+      while ((val >>= 7) > 0) {
+        buf.unshift((val & 0x7f) | 0x80);
+      }
+      return buf;
+    }
+
+    function parseMidi(buffer) {
+      const view = new DataView(buffer);
+      const state = { offset: 0 };
+      const header = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      if (header !== 'MThd') throw new Error('El archivo no es un MIDI válido');
+
+      const headerLen = view.getUint32(4);
+      const numTracks = view.getUint16(10);
+      const division = view.getUint16(12);
+      state.offset = 8 + headerLen;
+
+      const notes = [];
+      const metas = [];
+      let tempo = 500000;
+
+      for (let t = 0; t < numTracks; t++) {
+        if (state.offset + 8 > view.byteLength) break;
+        const id = String.fromCharCode(
+          view.getUint8(state.offset),
+          view.getUint8(state.offset + 1),
+          view.getUint8(state.offset + 2),
+          view.getUint8(state.offset + 3)
+        );
+        const len = view.getUint32(state.offset + 4);
+        state.offset += 8;
+        const end = state.offset + len;
+
+        if (id !== 'MTrk') {
+          state.offset = end;
+          continue;
+        }
+
+        let tick = 0;
+        let lastStatus = 0;
+        const openNotes = {};
+
+        while (state.offset < end) {
+          tick += readVarLen(view, state);
+          let statusByte = view.getUint8(state.offset);
+          if (statusByte < 0x80) {
+            statusByte = lastStatus;
+          } else {
+            state.offset++;
+            if (statusByte < 0xF0) lastStatus = statusByte;
+          }
+
+          if (statusByte === 0xFF) {
+            const metaType = view.getUint8(state.offset++);
+            const metaLen = readVarLen(view, state);
+            const data = [];
+            for (let i = 0; i < metaLen; i++) data.push(view.getUint8(state.offset++));
+
+            if (metaType === 0x51 && data.length === 3) {
+              tempo = (data[0] << 16) | (data[1] << 8) | data[2];
+              metas.push({ tick, metaType, data });
+            } else if (metaType === 0x58) {
+              metas.push({ tick, metaType, data });
+            }
+          } else if (statusByte === 0xF0 || statusByte === 0xF7) {
+            state.offset += readVarLen(view, state);
+          } else {
+            const type = statusByte & 0xF0;
+            const param1 = view.getUint8(state.offset++);
+            const param2 = (type !== 0xC0 && type !== 0xD0) ? view.getUint8(state.offset++) : null;
+
+            if (type === 0x90 && param2 > 0) {
+              openNotes[param1] = { tick, vel: param2 };
+            } else if (type === 0x80 || (type === 0x90 && param2 === 0)) {
+              const start = openNotes[param1] || { tick: Math.max(0, tick - 60), vel: 90 };
+              notes.push({
+                pitch: param1,
+                startTick: start.tick,
+                endTick: Math.max(start.tick + 20, tick),
+                vel: start.vel
+              });
+              delete openNotes[param1];
+            }
+          }
+        }
+        state.offset = end;
+      }
+
+      return { division, notes, metas, tempo };
+    }
+
+    function renderList() {
+      fileList.innerHTML = '';
+      filesData.forEach((item, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${item.name} (${item.parsed.notes.length} golpes)</span><button class="del-btn" onclick="removeFile(${index})">Quitar</button>`;
+        fileList.appendChild(li);
+      });
+      mergeBtn.disabled = filesData.length === 0;
+    }
+
+    window.removeFile = (index) => {
+      filesData.splice(index, 1);
+      renderList();
+    };
+
+    midiInput.onchange = async (e) => {
+      statusEl.textContent = '';
+      errorEl.textContent = '';
+      for (const file of e.target.files) {
+        try {
+          const parsed = parseMidi(await file.arrayBuffer());
+          filesData.push({ name: file.name, parsed });
+        } catch (err) {
+          errorEl.textContent = 'Error en ' + file.name + ': ' + err.message;
+        }
+      }
+      midiInput.value = '';
+      renderList();
+    };
+
+    async function humanizeWithMagenta(allNotes, bpm, timeAmt, velAmt, feelMs) {
+      const secPerBeat = 60 / bpm;
+      const barSec = secPerBeat * 4;
+      const maxSec = Math.max(...allNotes.map(n => n.endSec), barSec);
+      const numBars = Math.ceil(maxSec / (barSec * 2)) * 2;
+      const outNotes = [];
+
+      if (!vaeModel && typeof mm !== 'undefined' && (timeAmt > 0 || velAmt > 0)) {
+        statusEl.textContent = 'Descargando modelo IA GrooVAE (solo la 1ª vez)...';
+        vaeModel = new mm.MusicVAE(CHECKPOINT_URL);
+        await vaeModel.initialize();
+      }
+
+      for (let b = 0; b < numBars; b += 2) {
+        const winStart = b * barSec;
+        const winEnd = (b + 2) * barSec;
+        const chunk = allNotes.filter(n => n.startSec >= winStart && n.startSec < winEnd);
+        if (!chunk.length) continue;
+
+        const ns = {
+          notes: chunk.map(n => ({
+            pitch: n.pitch,
+            startTime: Math.max(0, n.startSec - winStart),
+            endTime: Math.max(0.05, n.endSec - winStart),
+            velocity: n.vel,
+            isDrum: true
+          })),
+          totalTime: barSec * 2,
+          tempos: [{ time: 0, qpm: bpm }]
+        };
+
+        let aiNotes = ns.notes;
+        if (vaeModel && (timeAmt > 0 || velAmt > 0)) {
+          const quantized = mm.sequences.quantizeNoteSequence(ns, 4);
+          const z = await vaeModel.encode([quantized]);
+          const decoded = await vaeModel.decode(z, 0.5);
+          z.dispose();
+          aiNotes = decoded[0].notes;
+        }
+
+        chunk.forEach(orig => {
+          const match = aiNotes.reduce((best, cand) => {
+            const dist = Math.abs(cand.startTime - (orig.startSec - winStart)) + (cand.pitch === orig.pitch ? 0 : 0.25);
+            return dist < best.dist ? { dist, cand } : best;
+          }, { dist: 99, cand: null }).cand;
+
+          let newStart = orig.startSec;
+          let newVel = orig.vel;
+          if (match) {
+            const aiStart = winStart + match.startTime;
+            newStart = orig.startSec + (aiStart - orig.startSec) * timeAmt;
+            newVel = Math.round(orig.vel + (match.velocity - orig.vel) * velAmt);
+          }
+
+          newStart = Math.max(0, newStart + (feelMs / 1000));
+          newVel = Math.min(127, Math.max(15, newVel));
+          const dur = Math.max(0.03, orig.endSec - orig.startSec);
+          outNotes.push({ pitch: orig.pitch, startSec: newStart, endSec: newStart + dur, vel: newVel });
+        });
+      }
+
+      return outNotes;
+    }
+
+    function buildFinalMidi(notes, metas, division, bpm) {
+      const secPerTick = (60 / bpm) / division;
+      const events = [];
+
+      metas.forEach(m => {
+        if (m.tick === 0) events.push({ tick: 0, type: 'meta', metaType: m.metaType, data: m.data });
+      });
+
+      notes.forEach(n => {
+        const t1 = Math.round(n.startSec / secPerTick);
+        const t2 = Math.max(t1 + 10, Math.round(n.endSec / secPerTick));
+        events.push({ tick: t1, type: 'midi', status: 0x90 | 0x09, p1: n.pitch, p2: n.vel });
+        events.push({ tick: t2, type: 'midi', status: 0x80 | 0x09, p1: n.pitch, p2: 0 });
+      });
+
+      events.sort((a, b) => a.tick - b.tick);
+
+      const trackBytes = [];
+      let lastTick = 0;
+
+      events.forEach(ev => {
+        const delta = Math.max(0, ev.tick - lastTick);
+        lastTick = ev.tick;
+        trackBytes.push(...writeVarLen(delta));
+        if (ev.type === 'meta') {
+          trackBytes.push(0xFF, ev.metaType, ...writeVarLen(ev.data.length), ...ev.data);
+        } else {
+          trackBytes.push(ev.status, ev.p1, ev.p2);
+        }
+      });
+
+      trackBytes.push(0x00, 0xFF, 0x2F, 0x00);
+
+      const out = new Uint8Array(22 + trackBytes.length);
+      const dv = new DataView(out.buffer);
+      out.set([0x4D, 0x54, 0x68, 0x64], 0);
+      dv.setUint32(4, 6);
+      dv.setUint16(8, 0);
+      dv.setUint16(10, 1);
+      dv.setUint16(12, division);
+      out.set([0x4D, 0x54, 0x72, 0x6B], 14);
+      dv.setUint32(18, trackBytes.length);
+      out.set(trackBytes, 22);
+      return out;
+    }
+
+    mergeBtn.onclick = async () => {
+      mergeBtn.disabled = true;
+      errorEl.textContent = '';
+      try {
+        const base = filesData[0].parsed;
+        const division = base.division || 480;
+        const bpm = Math.round(60000000 / (base.tempo || 500000));
+        const secPerTick = (60 / bpm) / division;
+
+        const merged = [];
+        filesData.forEach(f => {
+          const scale = division / (f.parsed.division || division);
+          f.parsed.notes.forEach(n => {
+            merged.push({
+              pitch: n.pitch,
+              startSec: (n.startTick * scale) * secPerTick,
+              endSec: (n.endTick * scale) * secPerTick,
+              vel: n.vel
+            });
+          });
+        });
+
+        statusEl.textContent = 'Procesando y humanizando con IA...';
+        const humanized = await humanizeWithMagenta(
+          merged,
+          bpm,
+          sliderTime.value / 100,
+          sliderVel.value / 100,
+          Number(sliderFeel.value)
+        );
+
+        const bytes = buildFinalMidi(humanized, base.metas, division, bpm);
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/midi' }));
+
+        let fileName = outName.value.trim() || 'bateria_humanizada';
+        if (!fileName.toLowerCase().endsWith('.mid')) fileName += '.mid';
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        statusEl.textContent = `¡Listo! Descargado ${fileName} (${humanized.length} golpes)`;
+      } catch (err) {
+        errorEl.textContent = 'Error: ' + err.message;
+      }
+      mergeBtn.disabled = false;
+    };
+  </script>
+</body>
+</html>
